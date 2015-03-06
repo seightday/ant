@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="svntools" default="upload" basedir=".">
+	<!--
+	在maven项目中使用
+	参考http://blog.sina.com.cn/s/blog_5920510a01018bvt.html
+	http://www.devnote.cn/article/119.html
+	http://www.myexception.cn/program/1673220.html
+	-->
+
+	<property name="svn.base.url" value=""/>
+	<property name="svn.master.url" value="${svn.base.url}/trunk/test"/>
+	<property name="svn.branch.url" value="${svn.base.url}/branches"/>
+	<property name="svn.username" value=""/>
+	<property name="svn.password" value=""/>
+	<property name="svn.exe" value="C:\Program Files\TortoiseSVN\bin\svn.exe"/>
+
+	<xmlproperty file="pom.xml"/>
+
+	<!-- 分支功能 -->
+	<target name="makeBranch">
+		<!-- 直接调用 svn.exe,注意svn.exe要能够通过path访问到-->
+		<exec executable="${svn.exe}">
+			<!-- 设置svn 的命令行参数 -->
+			<arg line="copy" />
+			<arg line="${svn.master.url}"/>
+			<arg line="${svn.branch.url}/${project.version}/${project.artifactId}"/>
+			<arg line="--parents"/>
+			<arg line="--username"/>
+			<arg line="${svn.username}"/>
+			<arg line="--password"/>
+			<arg line="${svn.password}"/>
+			<!--
+			<arg line="-m"/>
+			<arg line="msg"/>
+			-->
+			<arg line="-F"/>
+			<arg line="version_info.txt"/>
+		</exec>
+	</target>
+	<target name="mb" depends="makeBranch"></target>
+	
+
+	<!-- 生成增量更新的文件列表 -->
+	<property name="summarizeTxt" value="${basedir}\summarize.txt"/>
+	<property name="summarizeTmp" value="${basedir}\summarize_tmp.txt"/>
+	<!--本地<property name="newUrl" value="${basedir}/src"/>-->
+	<property name="newUrl" value="${svn.master.url}"/>
+	<property name="oldUrl" value="${svn.branch.url}/${project.version}/${project.artifactId}"/>
+	
+	<target name="diffSummarize">
+		<!-- 调用 svn.exe-->
+		<exec executable="${svn.exe}" output="${summarizeTxt}">
+			<!-- 设置svn 的命令行参数 -->
+			<arg line="diff" />
+			<arg line="--old" />
+			<arg line="${oldUrl}"/>
+			<arg line="--new" />
+			<arg line="${newUrl}"/>
+			<arg line="--username"/>
+			<arg line="${svn.username}"/>
+			<arg line="--password"/>
+			<arg line="${svn.password}"/>
+			<arg line="--summarize"/>
+		</exec>
+		
+		<!-- 复制 -->
+		<copy file="${summarizeTxt}" overwrite="true" tofile="${summarizeTmp}"></copy>
+		
+		<!-- 替换 -->
+		<replaceregexp file="${summarizeTxt}" match="^M\s+" replace="修改" byline="true" flags="m"></replaceregexp>
+		<replaceregexp file="${summarizeTxt}" match="^A\s+" replace="添加" byline="true" flags="m"></replaceregexp>
+		<replaceregexp file="${summarizeTxt}" match="^D\s+" replace="删除" byline="true" flags="m"></replaceregexp>
+	</target>
+	
+	<!-- 依赖ant-contrib-1.0b3.jar，放入ant\lib目录，更新eclilpse ant_home -->
+	 <taskdef resource="net/sf/antcontrib/antcontrib.properties">
+	 	<!-- 若依赖不在ant\lib目录，则定义以下classpath -->
+<!--
+	   <classpath>
+	     <pathelement location="/usr/share/java/ant-contrib.jar"/>
+	   </classpath>
+-->
+	 </taskdef>
+	
+	<property name="sftp.username" value=""/>
+	<property name="sftp.password" value=""/>
+	<property name="sftp.host" value=""/>
+	<property name="sftp.port" value="22"/>
+	<!-- 	<property name="sftp.local.dir" value="${basedir}\src\main\webapp"/> -->
+	<property name="sftp.local.dir" value="${basedir}\target\classes"/>
+	<property name="sftp.remote.dir" value="/"/>
+	
+	<!-- 上传至测试服务器 -->
+	<target name="upload" depends="diffSummarize">
+		<replaceregexp file="${summarizeTmp}" match="^M\s+" replace="" byline="true" flags="m"></replaceregexp>
+		<replaceregexp file="${summarizeTmp}" match="^A\s+" replace="" byline="true" flags="m"></replaceregexp>
+		<replaceregexp file="${summarizeTmp}" match="^D.*" replace="" byline="true" flags="m"></replaceregexp>
+		<!-- <replaceregexp file="${summarizeTmp}" match="${line.separator}" replace="," flags="g" byline="true"></replaceregexp> -->
+		<!-- 生成本地build之后的文件列表 -->
+		<replace file="${summarizeTmp}" >
+			<replacefilter token="${oldUrl}" 
+				value=""/>
+			<!-- <replacefilter token="/main/webapp/" value=""/> -->
+			<replacefilter token="/src/main/java/" value=""/>
+			<replacefilter token="/" value="\"/>
+			<!-- java -->
+			<replacefilter token=".java" value=".class"/>
+		</replace>
+		
+		<loadfile property="files" srcfile="${summarizeTmp}"></loadfile>
+		
+		<foreach list="${files}" delimiter="${line.separator}" param="file" target="sftp"></foreach>
+	</target>
+	
+	<!-- 
+	foreach调用，连接次数太多，本地速度快影响不大 
+	-->
+	<target name="sftp">
+		<!-- 依赖jsch-0.1.51.jar及jzlib-1.0.7.jar -->
+		<scp todir="${sftp.username}@${sftp.host}:${sftp.remote.dir}" 
+			password="${sftp.password}" trust="true" port="${sftp.port}" sftp="true" >
+			<fileset dir="${sftp.local.dir}">
+				<!-- dir+filename is full path -->
+				<filename name="${file}"/>
+			</fileset>
+			<echo message="${sftp.local.dir}/${file}"></echo>
+		</scp>
+	</target>
+	
+	
+	<!-- svnant使用 -->
+	<typedef resource="org/tigris/subversion/svnant/svnantlib.xml"></typedef>
+	<!--引用 svnantlib.xml ，其中定义了ANT的SVN命令，见下方详解。-->
+	<!--定义svnSetting ，新的设置SVN属性方式-->
+	<!-- 通过SVNKIT模式（即设置为TRUE)，而不是JAVAHL模式-->
+	<svnSetting id="svn.settings"  
+          svnkit="true"   
+          javahl="false"
+          username="${svn.username}"
+          password="${svn.password}"
+      />
+	<target name="copy">
+		<svn refid="svn.settings">
+			<!--引用上面定义的svnSetting ，新的设置SVN属性方式-->
+			<copy message="分支版本" srcUrl="${svn.master.url}/trunk/test"
+        		destUrl="${svn.master.url}/branches/1.0.0/test"
+        		/>
+		</svn>
+	</target>
+	<!-- 调用svnant中的copy命令，出现以下错误，使用svn.exe无此异常，未定位原因
+    copy:
+      [svn] svn: Failure opening '/trunk/test/pom.xml/trunk/test/pom.xml'
+      [svn] svn: REPORT of '/svn/firsttest/!svn/bc/15/trunk/test/pom.xml': 400 Bad Request (http://www.svnchina.com)
+      [svn] svn: Failure opening '/trunk/test/pom.xml/trunk/test/pom.xml'
+      [svn] svn: REPORT of '/svn/firsttest/!svn/bc/15/trunk/test/pom.xml': 400 Bad Request (http://www.svnchina.com)
+      [svn] <Copy> failed.
+     -->
+</project>
